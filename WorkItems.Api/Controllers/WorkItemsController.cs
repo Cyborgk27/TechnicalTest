@@ -15,64 +15,30 @@ namespace WorkItems.Api.Controllers
     public class WorkItemsController : ControllerBase
     {
         private readonly WorkItemsDbContext _context;
-        private readonly IDistributionService _distributionService;
+        private readonly IWorkItemApplicationService _workItemAppService;
 
-        // Usuarios del sistema que operan de forma externa
-        private readonly List<string> _externalUsernames = new() { "juan.perez", "maria.gomez", "pedro.vaca", "ana.silva" };
-
-        public WorkItemsController(WorkItemsDbContext context, IDistributionService distributionService)
+        public WorkItemsController(WorkItemsDbContext context, IWorkItemApplicationService workItemAppService)
         {
             _context = context;
-            _distributionService = distributionService;
+            _workItemAppService = workItemAppService;
         }
 
         /// <summary>
-        /// Crea un nuevo ítem de trabajo y ejecuta el algoritmo para asignarlo al usuario ideal.
+        /// Crea un nuevo ítem de trabajo y delega la asignación automática al servicio de aplicación.
         /// </summary>
         [HttpPost("allocate")]
         [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(WorkItem))]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> CreateAndAllocate([FromBody] CreateWorkItemRequest request)
         {
-            // 1. Calcular métricas en tiempo real desde la base de datos SQL Server
-            var userMetrics = await _context.WorkItems
-                .Where(i => i.Status == WorkItemStatus.Pending)
-                .GroupBy(i => i.AssignedUsername)
-                .Select(g => new UserMetricsDto
-                {
-                    Username = g.Key,
-                    PendingCount = g.Count(),
-                    HighRelevancePendingCount = g.Count(i => i.Relevance == WorkItemRelevance.High)
-                }).ToListAsync();
-
-            // Asegurar que todos los usuarios conocidos estén mapeados aunque tengan 0 tareas
-            foreach (var username in _externalUsernames)
-            {
-                if (!userMetrics.Any(m => m.Username == username))
-                {
-                    userMetrics.Add(new UserMetricsDto { Username = username, PendingCount = 0, HighRelevancePendingCount = 0 });
-                }
-            }
-
             try
             {
-                // 2. Correr algoritmo de asignación
-                string assignedUser = _distributionService.AllocateWorkItem(request.DueDate, request.Relevance, userMetrics);
-
-                var newWorkItem = new WorkItem
-                {
-                    Title = request.Title,
-                    Description = request.Description,
-                    DueDate = request.DueDate,
-                    Relevance = request.Relevance,
-                    Status = WorkItemStatus.Pending,
-                    AssignedUsername = assignedUser
-                };
-
-                _context.WorkItems.Add(newWorkItem);
-                await _context.SaveChangesAsync();
-
-                return Ok(new { Message = $"Ítem asignado a exitosamente a: {assignedUser}", Data = newWorkItem });
+                var result = await _workItemAppService.AllocateAndCreateAsync(request);
+                return Ok(new { Message = $"Ítem asignado exitosamente a: {result.AssignedUsername}", Data = result });
+            }
+            catch (HttpRequestException ex)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { Error = "El microservicio de usuarios no se encuentra disponible o respondió con error.", Details = ex.Message });
             }
             catch (Exception ex)
             {
@@ -87,7 +53,6 @@ namespace WorkItems.Api.Controllers
         [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(IEnumerable<WorkItem>))]
         public async Task<IActionResult> GetPendingByUser(string username)
         {
-            // Regla: Ordenar la lista de pendientes por usuario después de cada asignación (ordenado por fecha de entrega y relevancia)
             var pendingItems = await _context.WorkItems
                 .Where(i => i.AssignedUsername == username.ToLower().Trim() && i.Status == WorkItemStatus.Pending)
                 .OrderBy(i => i.DueDate)

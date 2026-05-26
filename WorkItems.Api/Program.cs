@@ -14,9 +14,14 @@ builder.Services.AddDbContext<WorkItemsDbContext>(options =>
 builder.Services.AddHttpClient("UsersServiceClient", client =>
 {
     client.BaseAddress = new Uri(usersServiceUrl);
-});
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+}); ;
 
 builder.Services.AddScoped<IDistributionService, DistributionService>();
+builder.Services.AddScoped<IWorkItemApplicationService, WorkItemApplicationService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
