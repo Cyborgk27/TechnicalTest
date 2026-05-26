@@ -2,5 +2,6 @@
   <Folder Name="/src/" />
   <Folder Name="/src/Services/">
     <Project Path="Users.Api/Users.Api.csproj" />
+    <Project Path="WorkItems.Api/WorkItems.Api.csproj" />
   </Folder>
 </Solution>
