@@ -1,8 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using System.Reflection.Emit;
-using Users.API.Models;
+using Users.Api.Models;
 
-namespace Users.API.Data
+namespace Users.Api.Data
 {
     /// <summary>
     /// Contexto de Entity Framework Core para la gestión de usuarios en SQL Server.

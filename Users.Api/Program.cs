@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
-using Users.API.Data;
+using Users.Api.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;

@@ -1,9 +1,9 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Users.API.Data;
-using Users.API.Models;
+using Users.Api.Data;
+using Users.Api.Models;
 
-namespace Users.API.Controllers
+namespace Users.Api.Controllers
 {
     /// <summary>
     /// Controlador encargado de exponer los servicios del microservicio de usuarios.

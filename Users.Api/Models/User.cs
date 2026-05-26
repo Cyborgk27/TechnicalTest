@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace Users.API.Models
+namespace Users.Api.Models
 {
     /// <summary>
     /// Representa la entidad de usuario dentro del sistema de distribución.

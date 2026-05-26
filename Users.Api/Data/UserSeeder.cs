@@ -1,7 +1,7 @@
 ﻿using Bogus;
-using Users.API.Models;
+using Users.Api.Models;
 
-namespace Users.API.Data
+namespace Users.Api.Data
 {
     /// <summary>
     /// Clase encargada de alimentar la base de datos con registros simulados iniciales.
