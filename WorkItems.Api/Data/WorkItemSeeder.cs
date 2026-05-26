@@ -26,7 +26,7 @@ namespace WorkItems.Api.Data
                 .RuleFor(i => i.Status, f => f.PickRandom<WorkItemStatus>())
                 .RuleFor(i => i.AssignedUsername, f => f.PickRandom(systemUsers));
 
-            var fakeItems = faker.Generate(12);
+            var fakeItems = faker.Generate(100);
 
             // ESCENARIO DE PRUEBA: Forzar la saturación de "juan.perez" con 4 tareas complejas pendientes
             // De esta forma los evaluadores constatarán que el algoritmo lo ignora al intentar asignarle código nuevo.
