@@ -1,4 +1,5 @@
 ﻿using WorkItems.Api.Dtos;
+using WorkItems.Api.Intefaces;
 using WorkItems.Api.Models;
 
 namespace WorkItems.Api.Services
@@ -10,9 +11,9 @@ namespace WorkItems.Api.Services
     {
         public string AllocateWorkItem(DateTime dueDate, WorkItemRelevance relevance, List<UserMetricsDto> userMetrics)
         {
-            // Regla: Filtrar usuarios saturados (Más de 3 ítems pendientes altamente relevantes)
+            // Filtrar usando la función explícita de saturación
             var availableUsers = userMetrics
-                .Where(u => u.HighRelevancePendingCount <= 3)
+                .Where(u => !IsUserSaturated(u))
                 .ToList();
 
             if (!availableUsers.Any())
@@ -20,37 +21,25 @@ namespace WorkItems.Api.Services
                 throw new InvalidOperationException("No existen usuarios disponibles. Todos los colaboradores están saturados.");
             }
 
-            // Regla: Próxima a vencer (menos de 3 días desde la fecha actual)
-            bool isUrgent = (dueDate.Date - DateTime.Today).TotalDays < 3;
-
-            if (isUrgent)
+            // Regla: Menos de 3 días (Urgente)
+            if ((dueDate.Date - DateTime.Today).TotalDays < 3)
             {
-                // Se asigna al usuario con menos ítems pendientes independientemente de la relevancia
-                var targetUser = availableUsers
-                    .OrderBy(u => u.PendingCount)
-                    .First();
-
-                return targetUser.Username;
+                return availableUsers.OrderBy(u => u.PendingCount).First().Username;
             }
 
-            // Regla: Los ítems relevantes se asignan primero a quienes tienen menor lista de pendientes
+            // Regla: Alta relevancia
             if (relevance == WorkItemRelevance.High)
             {
-                var targetUser = availableUsers
-                    .OrderBy(u => u.PendingCount)
-                    .First();
-
-                return targetUser.Username;
+                return availableUsers.OrderBy(u => u.PendingCount).First().Username;
             }
-            else
-            {
-                // Distribución estándar por balanceo de carga para ítems normales
-                var targetUser = availableUsers
-                    .OrderBy(u => u.PendingCount)
-                    .First();
 
-                return targetUser.Username;
-            }
+            // Distribución estándar
+            return availableUsers.OrderBy(u => u.PendingCount).First().Username;
+        }
+        public bool IsUserSaturated(UserMetricsDto user)
+        {
+            // Criterio de aceptación: Más de 3 ítems altamente relevantes pendientes
+            return user.HighRelevancePendingCount > 3;
         }
     }
 }

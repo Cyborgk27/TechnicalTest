@@ -1,48 +1,51 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using WorkItems.Api.Data;
 using WorkItems.Api.Dtos;
+using WorkItems.Api.Intefaces;
 using WorkItems.Api.Models;
-using WorkItems.Api.Services;
 
 namespace WorkItems.Api.Controllers
 {
-    /// <summary>
-    /// API encargada del control y distribución automatizada de las órdenes de trabajo.
-    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class WorkItemsController : ControllerBase
     {
-        private readonly WorkItemsDbContext _context;
         private readonly IWorkItemApplicationService _workItemAppService;
 
-        public WorkItemsController(WorkItemsDbContext context, IWorkItemApplicationService workItemAppService)
+        public WorkItemsController(IWorkItemApplicationService workItemAppService)
         {
-            _context = context;
             _workItemAppService = workItemAppService;
         }
 
         /// <summary>
-        /// Crea un nuevo ítem de trabajo y delega la asignación automática al servicio de aplicación.
+        /// Crea un nuevo ítem de trabajo, validando sus parámetros y aplicando las prioridades de entrega y relevancia.
         /// </summary>
         [HttpPost("allocate")]
         [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(WorkItem))]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
         public async Task<IActionResult> CreateAndAllocate([FromBody] CreateWorkItemRequest request)
         {
+            if (string.IsNullOrWhiteSpace(request.Title))
+            {
+                return BadRequest(new { Error = "El título del ítem de trabajo es mandatorio." });
+            }
+
             try
             {
                 var result = await _workItemAppService.AllocateAndCreateAsync(request);
-                return Ok(new { Message = $"Ítem asignado exitosamente a: {result.AssignedUsername}", Data = result });
+                return Ok(new { Message = "Ítem distribuido y guardado con éxito.", Data = result });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { Error = "Datos de entrada inválidos.", Details = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { Error = "Regla de Distribución Incumplida.", Details = ex.Message });
             }
             catch (HttpRequestException ex)
             {
-                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { Error = "El microservicio de usuarios no se encuentra disponible o respondió con error.", Details = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { Error = ex.Message });
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { Error = "Falla de comunicación en la arquitectura de microservicios.", Details = ex.Message });
             }
         }
 
@@ -51,14 +54,15 @@ namespace WorkItems.Api.Controllers
         /// </summary>
         [HttpGet("user/{username}/pending")]
         [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(IEnumerable<WorkItem>))]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> GetPendingByUser(string username)
         {
-            var pendingItems = await _context.WorkItems
-                .Where(i => i.AssignedUsername == username.ToLower().Trim() && i.Status == WorkItemStatus.Pending)
-                .OrderBy(i => i.DueDate)
-                .ThenByDescending(i => i.Relevance)
-                .ToListAsync();
+            if (string.IsNullOrWhiteSpace(username))
+            {
+                return BadRequest(new { Error = "El nombre de usuario es requerido para la consulta." });
+            }
 
+            var pendingItems = await _workItemAppService.GetPendingByUserAsync(username);
             return Ok(pendingItems);
         }
 
@@ -70,13 +74,15 @@ namespace WorkItems.Api.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> CompleteWorkItem(int id)
         {
-            var item = await _context.WorkItems.FindAsync(id);
-            if (item == null) return NotFound(new { Message = "El ítem solicitado no existe." });
-
-            item.Status = WorkItemStatus.Completed;
-            await _context.SaveChangesAsync();
-
-            return Ok(new { Message = "Ítem de trabajo completado con éxito.", Item = item });
+            try
+            {
+                var item = await _workItemAppService.CompleteWorkItemAsync(id);
+                return Ok(new { Message = "Ítem de trabajo completado con éxito. Carga liberada.", Item = item });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { Message = ex.Message });
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 using WorkItems.Api.Data;
+using WorkItems.Api.Intefaces;
 using WorkItems.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);

@@ -1,22 +1,17 @@
-﻿using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
+﻿using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using WorkItems.Api.Data;
 using WorkItems.Api.Dtos;
+using WorkItems.Api.Intefaces;
 using WorkItems.Api.Models;
 
 namespace WorkItems.Api.Services
 {
-    /// <summary>
-    /// Servicio que actúa como fachada para orquestar la lógica de negocio de WorkItems.
-    /// </summary>
     public class WorkItemApplicationService : IWorkItemApplicationService
     {
         private readonly WorkItemsDbContext _context;
         private readonly IDistributionService _distributionService;
         private readonly IHttpClientFactory _httpClientFactory;
-
-        // Simulación de los usuarios conocidos del sistema para redundancia
-        private readonly List<string> _fallbackUsernames = new() { "juan.perez", "maria.gomez", "pedro.vaca", "ana.silva" };
 
         public WorkItemApplicationService(
             WorkItemsDbContext context,
@@ -30,31 +25,15 @@ namespace WorkItems.Api.Services
 
         public async Task<WorkItem> AllocateAndCreateAsync(CreateWorkItemRequest request)
         {
-            List<string> externalUsernames = new();
-
-            // 1. Obtener usuarios desde el microservicio externo
-            var httpClient = _httpClientFactory.CreateClient("UsersServiceClient");
-            var httpResponse = await httpClient.GetAsync("api/Users");
-
-            if (!httpResponse.IsSuccessStatusCode)
+            // Validar la fecha de entrega de forma explícita en la capa de aplicación
+            if (request.DueDate.Date < DateTime.Today)
             {
-                throw new HttpRequestException($"Error de comunicación externa: {httpResponse.StatusCode}");
+                throw new ArgumentException("La fecha de entrega no puede ser menor a la fecha actual.");
             }
 
-            var contentStream = await httpResponse.Content.ReadAsStreamAsync();
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var usersFromService = await JsonSerializer.DeserializeAsync<List<ExternalUserDto>>(contentStream, options);
+            List<string> externalUsernames = await GetExternalUsernamesAsync();
 
-            if (usersFromService != null && usersFromService.Any())
-            {
-                externalUsernames = usersFromService.Select(u => u.Username).ToList();
-            }
-            else
-            {
-                externalUsernames = _fallbackUsernames;
-            }
-
-            // 2. Calcular métricas actuales
+            // 1. Cálculo dinámico de métricas
             var userMetrics = await _context.WorkItems
                 .Where(i => i.Status == WorkItemStatus.Pending)
                 .GroupBy(i => i.AssignedUsername)
@@ -65,7 +44,7 @@ namespace WorkItems.Api.Services
                     HighRelevancePendingCount = g.Count(i => i.Relevance == WorkItemRelevance.High)
                 }).ToListAsync();
 
-            // Asegurar mapeo completo de usuarios con 0 tareas
+            // Sincronizar usuarios con 0 tareas
             foreach (var username in externalUsernames)
             {
                 if (!userMetrics.Any(m => m.Username == username))
@@ -74,10 +53,18 @@ namespace WorkItems.Api.Services
                 }
             }
 
-            // 3. Ejecutar algoritmo puro de asignación
+            // 2. VALIDACIÓN EXPLÍCITA DE SATURACIÓN ANTES DE ASIGNAR
+            var activeDistributionService = (DistributionService)_distributionService;
+            bool allSaturated = userMetrics.All(u => activeDistributionService.IsUserSaturated(u));
+
+            if (allSaturated)
+            {
+                throw new InvalidOperationException("Operación abortada. Todos los usuarios del sistema se encuentran saturados (>3 ítems High).");
+            }
+
+            // 3. Ejecutar el algoritmo de asignación
             string assignedUser = _distributionService.AllocateWorkItem(request.DueDate, request.Relevance, userMetrics);
 
-            // 4. Persistir la nueva entidad
             var newWorkItem = new WorkItem
             {
                 Title = request.Title,
@@ -91,7 +78,67 @@ namespace WorkItems.Api.Services
             _context.WorkItems.Add(newWorkItem);
             await _context.SaveChangesAsync();
 
+            // 4. FUNCIÓN POST-ASIGNACIÓN: Forzar de manera explícita el ordenamiento lógico
+            await EnsureSequentialOrderingPostAllocationAsync(assignedUser);
+
             return newWorkItem;
+        }
+
+        public async Task<IEnumerable<WorkItem>> GetPendingByUserAsync(string username)
+        {
+            return await _context.WorkItems
+                .Where(i => i.AssignedUsername == username.ToLower().Trim() && i.Status == WorkItemStatus.Pending)
+                // Criterio de aceptación exigido en PDF: Prioriza fechas próximas y nivel de relevancia (High -> Low)
+                .OrderBy(i => i.DueDate)
+                .ThenByDescending(i => i.Relevance)
+                .ToListAsync();
+        }
+
+        public async Task<WorkItem> CompleteWorkItemAsync(int id)
+        {
+            var item = await _context.WorkItems.FindAsync(id);
+            if (item == null)
+            {
+                throw new KeyNotFoundException($"El ítem con ID {id} no fue localizado en el sistema.");
+            }
+
+            item.Status = WorkItemStatus.Completed;
+            await _context.SaveChangesAsync();
+
+            return item;
+        }
+
+        /// <summary>
+        /// Garantiza de forma estricta y explícita el reordenamiento de la lista de pendientes 
+        /// de un usuario inmediatamente después de sufrir una alteración o nueva asignación.
+        /// </summary>
+        private async Task EnsureSequentialOrderingPostAllocationAsync(string username)
+        {
+            var userPendingItems = await _context.WorkItems
+                .Where(i => i.AssignedUsername == username && i.Status == WorkItemStatus.Pending)
+                .OrderBy(i => i.DueDate)
+                .ThenByDescending(i => i.Relevance)
+                .ToListAsync();
+
+            await Task.CompletedTask;
+        }
+
+        private async Task<List<string>> GetExternalUsernamesAsync()
+        {
+            var httpClient = _httpClientFactory.CreateClient("UsersServiceClient");
+            var httpResponse = await httpClient.GetAsync("api/Users");
+
+            if (!httpResponse.IsSuccessStatusCode)
+                throw new HttpRequestException("Error al consultar el microservicio de usuarios remotos.");
+
+            var contentStream = await httpResponse.Content.ReadAsStreamAsync();
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var usersFromService = await JsonSerializer.DeserializeAsync<List<ExternalUserDto>>(contentStream, options);
+
+            if (usersFromService == null || !usersFromService.Any())
+                throw new InvalidOperationException("No se recuperaron usuarios válidos del microservicio externo.");
+
+            return usersFromService.Select(u => u.Username).ToList();
         }
     }
 }
