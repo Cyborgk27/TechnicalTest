@@ -5,9 +5,16 @@ using WorkItems.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
+var usersServiceUrl = builder.Configuration["ServiceUrls:UsersService"]
+    ?? throw new InvalidOperationException("La URL del servicio de usuarios no está configurada.");
 
 builder.Services.AddDbContext<WorkItemsDbContext>(options =>
     options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddHttpClient("UsersServiceClient", client =>
+{
+    client.BaseAddress = new Uri(usersServiceUrl);
+});
 
 builder.Services.AddScoped<IDistributionService, DistributionService>();
 
